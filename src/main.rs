@@ -381,8 +381,13 @@ impl Metadata {
     }
 }
 
+//
+// Save functions
+//
+
 type ArtistID = usize;
 type AlbumID = usize;
+type TrackID = usize;
 
 enum SaveArtistError {
     SQLite(rusqlite::Error),
@@ -404,11 +409,13 @@ fn save_artist(
     savepoint: &mut rusqlite::Savepoint,
     artist: &String,
 ) -> Result<ArtistID, SaveArtistError> {
-    match savepoint.query_row(
+    let id_result = savepoint.query_row(
         "SELECT id FROM artist WHERE name = $name",
         [artist],
         |row| Ok(row.get(0)?),
-    ) {
+    );
+
+    match id_result {
         Ok(id) => return Ok(id),
         Err(rusqlite::Error::QueryReturnedNoRows) => {
             match savepoint.execute("INSERT INTO artist(name) VALUES($name)", [artist]) {
@@ -440,9 +447,12 @@ fn save_album(
     savepoint: &mut rusqlite::Savepoint,
     album: &String,
 ) -> Result<AlbumID, SaveArtistError> {
-    match savepoint.query_row("SELECT id FROM album WHERE name = $name", [album], |row| {
-        Ok(row.get(0)?)
-    }) {
+    let id_result =
+        savepoint.query_row("SELECT id FROM album WHERE name = $name", [album], |row| {
+            Ok(row.get(0)?)
+        });
+
+    match id_result {
         Ok(id) => return Ok(id),
         Err(rusqlite::Error::QueryReturnedNoRows) => {
             match savepoint.execute("INSERT INTO album(name) VALUES($name)", [album]) {
@@ -454,6 +464,63 @@ fn save_album(
     }
 }
 
+enum SaveTrackError {
+    SQLite(rusqlite::Error),
+}
+impl From<rusqlite::Error> for SaveTrackError {
+    fn from(err: rusqlite::Error) -> SaveTrackError {
+        SaveTrackError::SQLite(err)
+    }
+}
+impl fmt::Display for SaveTrackError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            SaveTrackError::SQLite(err) => write!(f, "{}", err),
+        }
+    }
+}
+
+fn save_track(
+    savepoint: &mut rusqlite::Savepoint,
+    artist_id: ArtistID,
+    album_id: AlbumID,
+    metadata: &Metadata,
+) -> Result<TrackID, SaveTrackError> {
+    let query = "
+        INSERT INTO track(name, artist_id, album_id, release_date, number)
+        VALUES(
+          $name,
+          $artist_id,
+          $album_id,
+          $release_date,
+          $number
+        )
+        ON CONFLICT(name)
+        DO UPDATE SET
+          name = excluded.name,
+          artist_id = excluded.artist_id,
+          album_id = excluded.album_id,
+          release_date = excluded.release_date,
+          number = excluded.number";
+
+    let params = rusqlite::params![
+        metadata.track_name.as_ref().map(|s| s.to_owned()),
+        artist_id,
+        album_id,
+        metadata.release_date.as_ref().map(|s| s.to_owned()),
+        metadata.track_number,
+    ];
+
+    match savepoint.execute(query, params) {
+        Ok(_) => return Ok(savepoint.last_insert_rowid() as usize),
+        Err(err) => return Err(SaveTrackError::SQLite(err)),
+    }
+}
+
+//
+// "scan" command
+//
+
 enum CommandScanError {
     SQLite(rusqlite::Error),
     WalkDir(walkdir::Error),
@@ -461,6 +528,7 @@ enum CommandScanError {
     MetadataRead(MetadataReadError),
     SaveArtist(SaveArtistError),
     SaveAlbum(SaveAlbumError),
+    SaveTrack(SaveTrackError),
 }
 impl From<rusqlite::Error> for CommandScanError {
     fn from(err: rusqlite::Error) -> CommandScanError {
@@ -492,6 +560,11 @@ impl From<SaveAlbumError> for CommandScanError {
         CommandScanError::SaveAlbum(err)
     }
 }
+impl From<SaveTrackError> for CommandScanError {
+    fn from(err: SaveTrackError) -> CommandScanError {
+        CommandScanError::SaveTrack(err)
+    }
+}
 impl fmt::Display for CommandScanError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -501,6 +574,7 @@ impl fmt::Display for CommandScanError {
             CommandScanError::MetadataRead(err) => write!(f, "{}", err),
             CommandScanError::SaveArtist(err) => write!(f, "{}", err),
             CommandScanError::SaveAlbum(err) => write!(f, "{}", err),
+            CommandScanError::SaveTrack(err) => write!(f, "{}", err),
         }
     }
 }
@@ -520,8 +594,6 @@ fn cmd_scan(
 
     println!("scanning library \"{}\"", library.display());
 
-    let mut savepoint = db.savepoint()?;
-
     let walker = walkdir::WalkDir::new(library);
     for result in walker.follow_links(true) {
         let entry = result?;
@@ -535,30 +607,31 @@ fn cmd_scan(
             continue;
         }
 
+        let mut savepoint = db.savepoint()?;
+
         let md = metadata.unwrap();
 
-        let artist = md.artist.unwrap_or("Unknown".to_owned());
+        let artist = md.artist.clone().unwrap_or("Unknown".to_owned());
         let artist_id = save_artist(&mut savepoint, &artist)?;
 
-        let album = md.album.unwrap_or("Unknown".to_owned());
+        let album = md.album.clone().unwrap_or("Unknown".to_owned());
         let album_id = save_album(&mut savepoint, &album)?;
 
-        print!("artist=\"{}\" (id={}), ", artist, artist_id,);
+        let track_id = save_track(&mut savepoint, artist_id, album_id, &md)?;
+
+        print!("artist=\"{}\" (id={}), ", artist, artist_id);
         print!("album=\"{}\" (id={}), ", album, album_id);
+        print!("album artist=\"{}\"", md.album_artist.unwrap_or_default(),);
         print!(
-            "album artist=\"{}\" (id={})",
-            md.album_artist.unwrap_or_default(),
-            0,
-        );
-        print!(
-            "release date=\"{}\", track=\"{}\", track number={}\n",
+            "release date=\"{}\", track=\"{}\" (id={}), track number={}\n",
             md.release_date.unwrap_or_default(),
             md.track_name.unwrap_or_default(),
+            track_id,
             md.track_number,
         );
-    }
 
-    savepoint.commit()?;
+        savepoint.commit()?;
+    }
 
     Ok(())
 }
