@@ -284,33 +284,6 @@ fn cmd_config(
     Ok(())
 }
 
-enum CommandScanError {
-    SQLite(rusqlite::Error),
-    WalkDir(walkdir::Error),
-    IO(io::Error),
-    MetadataRead(MetadataReadError),
-}
-impl From<rusqlite::Error> for CommandScanError {
-    fn from(err: rusqlite::Error) -> CommandScanError {
-        CommandScanError::SQLite(err)
-    }
-}
-impl From<walkdir::Error> for CommandScanError {
-    fn from(err: walkdir::Error) -> CommandScanError {
-        CommandScanError::WalkDir(err)
-    }
-}
-impl From<io::Error> for CommandScanError {
-    fn from(err: io::Error) -> CommandScanError {
-        CommandScanError::IO(err)
-    }
-}
-impl From<MetadataReadError> for CommandScanError {
-    fn from(err: MetadataReadError) -> CommandScanError {
-        CommandScanError::MetadataRead(err)
-    }
-}
-
 enum MetadataReadError {
     IO(io::Error),
 }
@@ -398,7 +371,7 @@ impl Metadata {
                 },
                 None => None,
             },
-            Err(err) => None,
+            Err(_) => None,
         };
         if mp4_metadata.is_some() {
             return Ok(mp4_metadata);
@@ -414,6 +387,13 @@ enum SaveArtistError {
 impl From<rusqlite::Error> for SaveArtistError {
     fn from(err: rusqlite::Error) -> SaveArtistError {
         SaveArtistError::SQLite(err)
+    }
+}
+impl fmt::Display for SaveArtistError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            SaveArtistError::SQLite(err) => write!(f, "{}", err),
+        }
     }
 }
 
@@ -436,6 +416,50 @@ fn save_artist(
             }
         }
         Err(err) => return Err(SaveArtistError::SQLite(err)),
+    }
+}
+
+enum CommandScanError {
+    SQLite(rusqlite::Error),
+    WalkDir(walkdir::Error),
+    IO(io::Error),
+    MetadataRead(MetadataReadError),
+    SaveArtist(SaveArtistError),
+}
+impl From<rusqlite::Error> for CommandScanError {
+    fn from(err: rusqlite::Error) -> CommandScanError {
+        CommandScanError::SQLite(err)
+    }
+}
+impl From<walkdir::Error> for CommandScanError {
+    fn from(err: walkdir::Error) -> CommandScanError {
+        CommandScanError::WalkDir(err)
+    }
+}
+impl From<io::Error> for CommandScanError {
+    fn from(err: io::Error) -> CommandScanError {
+        CommandScanError::IO(err)
+    }
+}
+impl From<MetadataReadError> for CommandScanError {
+    fn from(err: MetadataReadError) -> CommandScanError {
+        CommandScanError::MetadataRead(err)
+    }
+}
+impl From<SaveArtistError> for CommandScanError {
+    fn from(err: SaveArtistError) -> CommandScanError {
+        CommandScanError::SaveArtist(err)
+    }
+}
+impl fmt::Display for CommandScanError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            CommandScanError::SQLite(err) => write!(f, "{}", err),
+            CommandScanError::WalkDir(err) => write!(f, "{}", err),
+            CommandScanError::IO(err) => write!(f, "{}", err),
+            CommandScanError::MetadataRead(err) => write!(f, "{}", err),
+            CommandScanError::SaveArtist(err) => write!(f, "{}", err),
+        }
     }
 }
 
@@ -466,18 +490,19 @@ fn cmd_scan(
         match Metadata::read_from_path(&file_path)? {
             Some(md) => {
                 let artist = md.artist.unwrap_or("Unknown".to_owned());
-                let artist_id = save_artist(&mut savepoint, &artist);
+                let artist_id = save_artist(&mut savepoint, &artist)?;
 
                 let album = md.album.unwrap_or("Unknown".to_owned());
 
-                println!("artist=\"{}\", album=\"{}\", album artist=\"{}\", release date=\"{}\", track=\"{}\", track number={}",
+                println!("artist=\"{}\" (id={}), album=\"{}\", album artist=\"{}\", release date=\"{}\", track=\"{}\", track number={}",
                          artist,
+                         artist_id,
                          album,
-                    md.album_artist.unwrap_or_default(),
-                    md.release_date.unwrap_or_default(),
-                    md.track_name.unwrap_or_default(),
-                    md.track_number,
-                );
+                         md.album_artist.unwrap_or_default(),
+                         md.release_date.unwrap_or_default(),
+                         md.track_name.unwrap_or_default(),
+                         md.track_number,
+                         );
             }
             None => println!("not a supported audio file"),
         }
@@ -486,11 +511,6 @@ fn cmd_scan(
     savepoint.commit()?;
 
     Ok(())
-}
-impl fmt::Display for CommandScanError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Ok(())
-    }
 }
 
 enum AppError {
