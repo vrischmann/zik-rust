@@ -14,17 +14,22 @@ use std::result::Result;
 
 #[derive(Debug)]
 enum OpenDatabaseError {
+    IO(io::Error),
     SQLite(rusqlite::Error),
     DataFolderNotFound,
 }
 impl fmt::Display for OpenDatabaseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            OpenDatabaseError::SQLite(err) => {
-                write!(f, "SQLite error while opening database: {}", err)
-            }
+            OpenDatabaseError::IO(err) => write!(f, "{}", err),
+            OpenDatabaseError::SQLite(err) => write!(f, "{}", err),
             OpenDatabaseError::DataFolderNotFound => write!(f, "data folder for Zik not found"),
         }
+    }
+}
+impl From<io::Error> for OpenDatabaseError {
+    fn from(err: io::Error) -> OpenDatabaseError {
+        OpenDatabaseError::IO(err)
     }
 }
 impl From<rusqlite::Error> for OpenDatabaseError {
@@ -35,7 +40,10 @@ impl From<rusqlite::Error> for OpenDatabaseError {
 
 fn open_database() -> Result<rusqlite::Connection, OpenDatabaseError> {
     if let Some(project_directories) = directories::ProjectDirs::from("fr", "rischmann", "zik") {
-        let db_path = project_directories.data_dir().join("data.db");
+        let data_dir = project_directories.data_dir();
+        fs::create_dir_all(data_dir)?;
+
+        let db_path = data_dir.join("data.db");
         let connection = rusqlite::Connection::open(db_path)?;
 
         Ok(connection)
@@ -400,6 +408,37 @@ impl Metadata {
     }
 }
 
+enum SaveArtistError {
+    SQLite(rusqlite::Error),
+}
+impl From<rusqlite::Error> for SaveArtistError {
+    fn from(err: rusqlite::Error) -> SaveArtistError {
+        SaveArtistError::SQLite(err)
+    }
+}
+
+type ArtistID = usize;
+
+fn save_artist(
+    savepoint: &mut rusqlite::Savepoint,
+    artist: &String,
+) -> Result<ArtistID, SaveArtistError> {
+    match savepoint.query_row(
+        "SELECT id FROM artist WHERE name = $name",
+        [artist],
+        |row| Ok(row.get(0)?),
+    ) {
+        Ok(id) => return Ok(id),
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            match savepoint.execute("INSERT INTO artist(name) VALUES($name)", [artist]) {
+                Ok(_) => return Ok(savepoint.last_insert_rowid() as usize),
+                Err(err) => return Err(SaveArtistError::SQLite(err)),
+            }
+        }
+        Err(err) => return Err(SaveArtistError::SQLite(err)),
+    }
+}
+
 fn cmd_scan(
     db: &mut rusqlite::Connection,
     args: &clap::ArgMatches,
@@ -415,7 +454,7 @@ fn cmd_scan(
 
     println!("scanning library \"{}\"", library.display());
 
-    let mut savepoint = db.savepoint();
+    let mut savepoint = db.savepoint()?;
 
     let walker = walkdir::WalkDir::new(library);
     for result in walker.follow_links(true) {
@@ -423,11 +462,17 @@ fn cmd_scan(
 
         let file_path = entry.path();
         println!("file: {}", file_path.display());
+
         match Metadata::read_from_path(&file_path)? {
             Some(md) => {
+                let artist = md.artist.unwrap_or("Unknown".to_owned());
+                let artist_id = save_artist(&mut savepoint, &artist);
+
+                let album = md.album.unwrap_or("Unknown".to_owned());
+
                 println!("artist=\"{}\", album=\"{}\", album artist=\"{}\", release date=\"{}\", track=\"{}\", track number={}",
-                    md.artist.unwrap_or("unknown".to_owned()),
-                    md.album.unwrap_or("unknown".to_owned()),
+                         artist,
+                         album,
                     md.album_artist.unwrap_or_default(),
                     md.release_date.unwrap_or_default(),
                     md.track_name.unwrap_or_default(),
@@ -437,6 +482,8 @@ fn cmd_scan(
             None => println!("not a supported audio file"),
         }
     }
+
+    savepoint.commit()?;
 
     Ok(())
 }
@@ -456,7 +503,7 @@ enum AppError {
 impl fmt::Display for AppError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            AppError::OpenDatabase(err) => write!(f, "unable to open database: {}", err),
+            AppError::OpenDatabase(err) => write!(f, "{}", err),
             AppError::CommandConfig(err) => write!(f, "{}", err),
             AppError::CommandScan(err) => write!(f, "{}", err),
             _ => write!(f, "foobar"),
