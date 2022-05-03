@@ -584,7 +584,7 @@ impl fmt::Display for CommandScanError {
 
 fn cmd_scan(
     db: &mut rusqlite::Connection,
-    args: &clap::ArgMatches,
+    _args: &clap::ArgMatches,
 ) -> Result<(), CommandScanError> {
     let library: PathBuf = db.query_row(
         "SELECT value FROM config WHERE key = 'library'",
