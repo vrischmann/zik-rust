@@ -20,7 +20,7 @@ impl fmt::Display for OpenDatabaseError {
             OpenDatabaseError::SQLite(err) => {
                 write!(f, "SQLite error while opening database: {}", err)
             }
-            DataFolderNotFound => write!(f, "data folder for Zik not found"),
+            OpenDatabaseError::DataFolderNotFound => write!(f, "data folder for Zik not found"),
         }
     }
 }
