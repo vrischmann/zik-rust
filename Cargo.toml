@@ -7,7 +7,10 @@ edition = "2021"
 
 [dependencies]
 rusqlite = { version = "~0.27.0", features = ["bundled"] }
-metaflac = "~0.2"
 directories = "~4.0"
 clap = { version = "~3.1.15", features = ["std", "color"] }
 walkdir = "~2.3.2"
+
+# Metadata parsers
+metaflac = "~0.2"
+mp4parse = "~0.12.0"

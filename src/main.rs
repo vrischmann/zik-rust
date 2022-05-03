@@ -1,10 +1,13 @@
 extern crate clap;
 extern crate directories;
+extern crate metaflac;
+extern crate mp4parse;
 extern crate rusqlite;
 extern crate walkdir;
 
 use clap::{Arg, Command};
 use std::fmt;
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::result::Result;
@@ -201,7 +204,7 @@ fn get_library_path(value: &str) -> Result<PathBuf, GetLibraryPathError> {
     }
     path.metadata()?;
 
-    let canonicalized_path = std::fs::canonicalize(path)?;
+    let canonicalized_path = fs::canonicalize(path)?;
 
     Ok(canonicalized_path.to_path_buf())
 }
@@ -273,13 +276,133 @@ fn cmd_config(
     Ok(())
 }
 
-#[derive(Debug)]
 enum CommandScanError {
     SQLite(rusqlite::Error),
+    WalkDir(walkdir::Error),
+    IO(io::Error),
+    MetadataRead(MetadataReadError),
 }
 impl From<rusqlite::Error> for CommandScanError {
     fn from(err: rusqlite::Error) -> CommandScanError {
         CommandScanError::SQLite(err)
+    }
+}
+impl From<walkdir::Error> for CommandScanError {
+    fn from(err: walkdir::Error) -> CommandScanError {
+        CommandScanError::WalkDir(err)
+    }
+}
+impl From<io::Error> for CommandScanError {
+    fn from(err: io::Error) -> CommandScanError {
+        CommandScanError::IO(err)
+    }
+}
+impl From<MetadataReadError> for CommandScanError {
+    fn from(err: MetadataReadError) -> CommandScanError {
+        CommandScanError::MetadataRead(err)
+    }
+}
+
+enum MetadataReadError {
+    NotSupported(PathBuf),
+    IO(io::Error),
+}
+impl From<io::Error> for MetadataReadError {
+    fn from(err: io::Error) -> MetadataReadError {
+        MetadataReadError::IO(err)
+    }
+}
+impl fmt::Display for MetadataReadError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            MetadataReadError::NotSupported(path) => write!(
+                f,
+                "file \"{}\" is not a supported audio file",
+                path.display()
+            ),
+            MetadataReadError::IO(err) => write!(f, "unable to open or read file, err: {}", err),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct Metadata {
+    artist: Option<String>,
+    album: Option<String>,
+    album_artist: Option<String>,
+    release_date: Option<String>,
+    track_name: Option<String>,
+    track_number: usize,
+}
+impl Metadata {
+    fn get_vorbis_comment<'a>(tag: &'a metaflac::Tag, key: &'static str) -> Option<String> {
+        match tag.get_vorbis(key) {
+            Some(mut iter) => match iter.next() {
+                Some(comment) => Some(comment.to_owned()),
+                None => None,
+            },
+            None => None,
+        }
+    }
+
+    fn get_mp4_string(value_opt: Option<mp4parse::TryString>) -> Option<String> {
+        match value_opt {
+            Some(value) => match String::from_utf8(value.to_vec()) {
+                Ok(data) => Some(data),
+                Err(_) => None,
+            },
+            None => None,
+        }
+    }
+
+    fn read_from_path(path: &Path) -> Result<Option<Metadata>, MetadataReadError> {
+        let mut file = fs::File::open(path)?;
+
+        // Parse as FLAC first
+
+        let flac_metadata: Option<Metadata> = match metaflac::Tag::read_from(&mut file) {
+            Ok(tag) => Some(Metadata {
+                artist: Metadata::get_vorbis_comment(&tag, "ARTIST"),
+                album: Metadata::get_vorbis_comment(&tag, "ALBUM"),
+                album_artist: Metadata::get_vorbis_comment(&tag, "ALBUMARTIST"),
+                release_date: Metadata::get_vorbis_comment(&tag, "DATE"),
+                track_name: Metadata::get_vorbis_comment(&tag, "TITLE"),
+                track_number: Metadata::get_vorbis_comment(&tag, "TRACK_NUMBER")
+                    .map_or(0, |value| value.parse().unwrap_or(0)),
+            }),
+            Err(_) => None,
+        };
+        if flac_metadata.is_some() {
+            return Ok(flac_metadata);
+        }
+
+        // Parse as MP4 next
+
+        let mp4_metadata: Option<Metadata> = match mp4parse::read_mp4(&mut file) {
+            Ok(root) => match root.userdata {
+                Some(result) => match result {
+                    Ok(user_data) => match user_data.meta {
+                        Some(metadata) => Some(Metadata {
+                            artist: Metadata::get_mp4_string(metadata.artist),
+                            album: Metadata::get_mp4_string(metadata.album),
+                            album_artist: Metadata::get_mp4_string(metadata.album_artist),
+                            release_date: Metadata::get_mp4_string(metadata.year),
+                            track_name: Metadata::get_mp4_string(metadata.title),
+                            track_number: metadata.track_number.map_or(0, |n| n as usize),
+                        }),
+                        None => None,
+                    },
+                    Err(_) => None,
+                },
+                None => None,
+            },
+            Err(err) => None,
+        };
+        if mp4_metadata.is_some() {
+            return Ok(mp4_metadata);
+        }
+
+        return Ok(None);
     }
 }
 
@@ -301,8 +424,24 @@ fn cmd_scan(
     let mut savepoint = db.savepoint();
 
     let walker = walkdir::WalkDir::new(library);
-    for entry in walker.follow_links(true) {
-        println!("entry: {:?}", entry);
+    for result in walker.follow_links(true) {
+        let entry = result?;
+
+        let file_path = entry.path();
+        println!("file: {}", file_path.display());
+        match Metadata::read_from_path(&file_path)? {
+            Some(md) => {
+                println!("artist=\"{}\", album=\"{}\", album artist=\"{}\", release date=\"{}\", track=\"{}\", track number={}",
+                    md.artist.unwrap_or("unknown".to_owned()),
+                    md.album.unwrap_or("unknown".to_owned()),
+                    md.album_artist.unwrap_or_default(),
+                    md.release_date.unwrap_or_default(),
+                    md.track_name.unwrap_or_default(),
+                    md.track_number,
+                );
+            }
+            None => println!("not a supported audio file"),
+        }
     }
 
     Ok(())
