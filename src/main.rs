@@ -601,7 +601,7 @@ fn cmd_scan(
         let entry = result?;
 
         let file_path = entry.path();
-        println!("file: {}", file_path.display());
+        println!("file {}", file_path.display());
 
         let metadata = Metadata::read_from_path(&file_path)?;
         if let None = metadata {
@@ -619,11 +619,12 @@ fn cmd_scan(
 
         save_track(&mut savepoint, artist_id, album_id, &md)?;
 
-        print!("artist=\"{}\" (id={}), ", artist, artist_id);
-        print!("album=\"{}\" (id={}), ", album, album_id);
-        print!("album artist=\"{}\"", md.album_artist.unwrap_or_default(),);
-        print!(
-            "release date=\"{}\", track=\"{}\", track number={}\n",
+        println!("artist=\"{}\" (id={}), album=\"{}\" (id={}), album artist=\"{}\", release date={}, track=\"{}\", track number={}",
+            artist,
+            artist_id,
+            album,
+            album_id,
+            md.album_artist.unwrap_or_default(),
             md.release_date.unwrap_or_default(),
             md.track_name.unwrap_or_default(),
             md.track_number,
