@@ -13,7 +13,6 @@ enum OpenDatabaseError {
     SQLite(rusqlite::Error),
     DataFolderNotFound,
 }
-
 impl fmt::Display for OpenDatabaseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -24,7 +23,6 @@ impl fmt::Display for OpenDatabaseError {
         }
     }
 }
-
 impl From<rusqlite::Error> for OpenDatabaseError {
     fn from(err: rusqlite::Error) -> OpenDatabaseError {
         OpenDatabaseError::SQLite(err)
@@ -105,7 +103,6 @@ enum Config {
     Library(PathBuf),
     ScanParallelism(usize),
 }
-
 impl fmt::Display for Config {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -114,50 +111,22 @@ impl fmt::Display for Config {
         }
     }
 }
-
-enum ConfigCreateError {
-    GetLibraryPath(GetLibraryPathError),
-    InvalidKey(String),
-    InvalidScanParallelismValue(std::num::ParseIntError),
-}
-impl From<GetLibraryPathError> for ConfigCreateError {
-    fn from(err: GetLibraryPathError) -> ConfigCreateError {
-        ConfigCreateError::GetLibraryPath(err)
-    }
-}
-impl fmt::Display for ConfigCreateError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl rusqlite::ToSql for Config {
+    fn to_sql(&self) -> Result<rusqlite::types::ToSqlOutput<'_>, rusqlite::Error> {
         match self {
-            ConfigCreateError::GetLibraryPath(err) => {
-                write!(f, "could not resolve library path: {}", err)
+            Config::Library(path) => {
+                let path_data = path.to_string_lossy().to_string();
+                Ok(rusqlite::types::ToSqlOutput::from(path_data))
             }
-            ConfigCreateError::InvalidKey(key) => write!(f, "key `{}` is invalid", key),
-            ConfigCreateError::InvalidScanParallelismValue(err) => {
-                write!(f, "`scan_parallelism` value \"{}\" is invalid", err)
+            Config::ScanParallelism(n) => {
+                let new_n = *n as i64;
+                Ok(rusqlite::types::ToSqlOutput::from(new_n))
             }
         }
     }
 }
-
 impl Config {
     const VALID_KEYS: [&'static str; 2] = ["library", "scan_parallelism"];
-
-    fn create(key: &str, value: &str) -> Result<Config, ConfigCreateError> {
-        match key.to_lowercase().as_ref() {
-            "library" => {
-                let dir = get_library_path(value)?;
-                Ok(Config::Library(dir))
-            }
-            "scan_parallelism" => {
-                let n: usize = match value.parse() {
-                    Ok(n) => n,
-                    Err(err) => return Err(ConfigCreateError::InvalidScanParallelismValue(err)),
-                };
-                Ok(Config::ScanParallelism(n))
-            }
-            _ => Err(ConfigCreateError::InvalidKey(key.to_string())),
-        }
-    }
 
     fn is_valid_key(key: &str) -> bool {
         return Config::VALID_KEYS.contains(&key);
@@ -168,11 +137,17 @@ enum CommandConfigError {
     SQLite(rusqlite::Error),
     InvalidKey(String),
     NoValue(String),
-    Create(ConfigCreateError),
+    GetLibraryPath(GetLibraryPathError),
+    InvalidScanParallelismValue(std::num::ParseIntError),
 }
 impl From<rusqlite::Error> for CommandConfigError {
     fn from(err: rusqlite::Error) -> CommandConfigError {
         CommandConfigError::SQLite(err)
+    }
+}
+impl From<GetLibraryPathError> for CommandConfigError {
+    fn from(err: GetLibraryPathError) -> CommandConfigError {
+        CommandConfigError::GetLibraryPath(err)
     }
 }
 impl fmt::Display for CommandConfigError {
@@ -181,8 +156,11 @@ impl fmt::Display for CommandConfigError {
             CommandConfigError::SQLite(err) => write!(f, "SQLite error, {}", err),
             CommandConfigError::InvalidKey(key) => write!(f, "key name `{}` is invalid", key),
             CommandConfigError::NoValue(key) => write!(f, "no value for key name `{}`", key),
-            CommandConfigError::Create(err) => {
-                write!(f, "error while creating configuration: {}", err)
+            CommandConfigError::GetLibraryPath(err) => {
+                write!(f, "could not resolve library path: {}", err)
+            }
+            CommandConfigError::InvalidScanParallelismValue(err) => {
+                write!(f, "`scan_parallelism` value \"{}\" is invalid", err)
             }
         }
     }
@@ -239,17 +217,26 @@ fn cmd_config(
             }
             let value = args.value_of("value").unwrap();
 
-            return match Config::create(key, value) {
-                Ok(_) => {
-                    let query = "INSERT INTO config(key, value) VALUES($key, $value)
-                ON CONFLICT(key) DO UPDATE SET value = excluded.value";
-
-                    db.execute(query, [key, value])?;
-
-                    Ok(())
+            let config: Config = match key {
+                "library" => {
+                    let dir = get_library_path(value)?;
+                    Config::Library(dir)
                 }
-                Err(err) => Err(CommandConfigError::Create(err)),
+                "scan_parallelism" => {
+                    let n: usize = match value.parse() {
+                        Ok(n) => n,
+                        Err(err) => {
+                            return Err(CommandConfigError::InvalidScanParallelismValue(err))
+                        }
+                    };
+                    Config::ScanParallelism(n)
+                }
+                _ => return Err(CommandConfigError::InvalidKey(key.to_string())),
             };
+
+            let query = "INSERT INTO config(key, value) VALUES($key, $value) ON CONFLICT(key) DO UPDATE SET value = excluded.value";
+
+            db.execute(query, rusqlite::params![key, config])?;
         } else {
             let key = args.value_of("key").unwrap();
             if !Config::is_valid_key(key) {
