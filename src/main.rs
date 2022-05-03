@@ -304,7 +304,6 @@ impl From<MetadataReadError> for CommandScanError {
 }
 
 enum MetadataReadError {
-    NotSupported(PathBuf),
     IO(io::Error),
 }
 impl From<io::Error> for MetadataReadError {
@@ -315,11 +314,6 @@ impl From<io::Error> for MetadataReadError {
 impl fmt::Display for MetadataReadError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            MetadataReadError::NotSupported(path) => write!(
-                f,
-                "file \"{}\" is not a supported audio file",
-                path.display()
-            ),
             MetadataReadError::IO(err) => write!(f, "unable to open or read file, err: {}", err),
         }
     }
