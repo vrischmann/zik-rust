@@ -487,25 +487,32 @@ fn cmd_scan(
         let file_path = entry.path();
         println!("file: {}", file_path.display());
 
-        match Metadata::read_from_path(&file_path)? {
-            Some(md) => {
-                let artist = md.artist.unwrap_or("Unknown".to_owned());
-                let artist_id = save_artist(&mut savepoint, &artist)?;
-
-                let album = md.album.unwrap_or("Unknown".to_owned());
-
-                println!("artist=\"{}\" (id={}), album=\"{}\", album artist=\"{}\", release date=\"{}\", track=\"{}\", track number={}",
-                         artist,
-                         artist_id,
-                         album,
-                         md.album_artist.unwrap_or_default(),
-                         md.release_date.unwrap_or_default(),
-                         md.track_name.unwrap_or_default(),
-                         md.track_number,
-                         );
-            }
-            None => println!("not a supported audio file"),
+        let metadata = Metadata::read_from_path(&file_path)?;
+        if let None = metadata {
+            println!("not a supported audio file");
+            continue;
         }
+
+        let md = metadata.unwrap();
+
+        let artist = md.artist.unwrap_or("Unknown".to_owned());
+        let artist_id = save_artist(&mut savepoint, &artist)?;
+
+        let album = md.album.unwrap_or("Unknown".to_owned());
+
+        print!("artist=\"{}\" (id={}), ", artist, artist_id,);
+        print!("album=\"{}\" (id={}), ", album, 0);
+        print!(
+            "album artist=\"{}\" (id={})",
+            md.album_artist.unwrap_or_default(),
+            0
+        );
+        print!(
+            "release date=\"{}\", track=\"{}\", track number={}\n",
+            md.release_date.unwrap_or_default(),
+            md.track_name.unwrap_or_default(),
+            md.track_number,
+        );
     }
 
     savepoint.commit()?;
