@@ -1,6 +1,7 @@
 extern crate clap;
 extern crate directories;
 extern crate rusqlite;
+extern crate walkdir;
 
 use clap::{Arg, Command};
 use std::fmt;
@@ -273,12 +274,37 @@ fn cmd_config(
 }
 
 #[derive(Debug)]
-enum CommandScanError {}
+enum CommandScanError {
+    SQLite(rusqlite::Error),
+}
+impl From<rusqlite::Error> for CommandScanError {
+    fn from(err: rusqlite::Error) -> CommandScanError {
+        CommandScanError::SQLite(err)
+    }
+}
 
 fn cmd_scan(
     db: &mut rusqlite::Connection,
     args: &clap::ArgMatches,
 ) -> Result<(), CommandScanError> {
+    let library: PathBuf = db.query_row(
+        "SELECT value FROM config WHERE key = 'library'",
+        [],
+        |row| {
+            let value: String = row.get(0)?;
+            Ok(PathBuf::from(value))
+        },
+    )?;
+
+    println!("scanning library \"{}\"", library.display());
+
+    let mut savepoint = db.savepoint();
+
+    let walker = walkdir::WalkDir::new(library);
+    for entry in walker.follow_links(true) {
+        println!("entry: {:?}", entry);
+    }
+
     Ok(())
 }
 impl fmt::Display for CommandScanError {
