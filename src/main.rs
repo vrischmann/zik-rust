@@ -212,9 +212,6 @@ fn cmd_config(
     if args.args_present() {
         if args.is_present("key") && args.is_present("value") {
             let key = args.value_of("key").unwrap();
-            if !Config::is_valid_key(key) {
-                return Err(CommandConfigError::InvalidKey(key.to_string()));
-            }
             let value = args.value_of("value").unwrap();
 
             let config: Config = match key {
