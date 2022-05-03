@@ -9,6 +9,7 @@ use clap::{Arg, Command};
 use std::fmt;
 use std::fs;
 use std::io;
+use std::io::Seek;
 use std::path::{Path, PathBuf};
 use std::result::Result;
 
@@ -352,6 +353,8 @@ impl Metadata {
         }
 
         // Parse as MP4 next
+
+        file.seek(io::SeekFrom::Start(0));
 
         let mp4_metadata: Option<Metadata> = match mp4parse::read_mp4(&mut file) {
             Ok(root) => match root.userdata {
