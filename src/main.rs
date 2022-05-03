@@ -485,7 +485,7 @@ fn save_track(
     artist_id: ArtistID,
     album_id: AlbumID,
     metadata: &Metadata,
-) -> Result<TrackID, SaveTrackError> {
+) -> Result<(), SaveTrackError> {
     let query = "
         INSERT INTO track(name, artist_id, album_id, release_date, number)
         VALUES(
@@ -512,7 +512,7 @@ fn save_track(
     ];
 
     match savepoint.execute(query, params) {
-        Ok(_) => return Ok(savepoint.last_insert_rowid() as usize),
+        Ok(_) => return Ok(()),
         Err(err) => return Err(SaveTrackError::SQLite(err)),
     }
 }
@@ -594,6 +594,8 @@ fn cmd_scan(
 
     println!("scanning library \"{}\"", library.display());
 
+    let mut savepoint = db.savepoint()?;
+
     let walker = walkdir::WalkDir::new(library);
     for result in walker.follow_links(true) {
         let entry = result?;
@@ -607,8 +609,6 @@ fn cmd_scan(
             continue;
         }
 
-        let mut savepoint = db.savepoint()?;
-
         let md = metadata.unwrap();
 
         let artist = md.artist.clone().unwrap_or("Unknown".to_owned());
@@ -617,21 +617,20 @@ fn cmd_scan(
         let album = md.album.clone().unwrap_or("Unknown".to_owned());
         let album_id = save_album(&mut savepoint, &album)?;
 
-        let track_id = save_track(&mut savepoint, artist_id, album_id, &md)?;
+        save_track(&mut savepoint, artist_id, album_id, &md)?;
 
         print!("artist=\"{}\" (id={}), ", artist, artist_id);
         print!("album=\"{}\" (id={}), ", album, album_id);
         print!("album artist=\"{}\"", md.album_artist.unwrap_or_default(),);
         print!(
-            "release date=\"{}\", track=\"{}\" (id={}), track number={}\n",
+            "release date=\"{}\", track=\"{}\", track number={}\n",
             md.release_date.unwrap_or_default(),
             md.track_name.unwrap_or_default(),
-            track_id,
             md.track_number,
         );
-
-        savepoint.commit()?;
     }
+
+    savepoint.commit()?;
 
     Ok(())
 }
