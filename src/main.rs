@@ -381,6 +381,9 @@ impl Metadata {
     }
 }
 
+type ArtistID = usize;
+type AlbumID = usize;
+
 enum SaveArtistError {
     SQLite(rusqlite::Error),
 }
@@ -396,8 +399,6 @@ impl fmt::Display for SaveArtistError {
         }
     }
 }
-
-type ArtistID = usize;
 
 fn save_artist(
     savepoint: &mut rusqlite::Savepoint,
@@ -419,12 +420,47 @@ fn save_artist(
     }
 }
 
+enum SaveAlbumError {
+    SQLite(rusqlite::Error),
+}
+impl From<rusqlite::Error> for SaveAlbumError {
+    fn from(err: rusqlite::Error) -> SaveAlbumError {
+        SaveAlbumError::SQLite(err)
+    }
+}
+impl fmt::Display for SaveAlbumError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            SaveAlbumError::SQLite(err) => write!(f, "{}", err),
+        }
+    }
+}
+
+fn save_album(
+    savepoint: &mut rusqlite::Savepoint,
+    album: &String,
+) -> Result<AlbumID, SaveArtistError> {
+    match savepoint.query_row("SELECT id FROM album WHERE name = $name", [album], |row| {
+        Ok(row.get(0)?)
+    }) {
+        Ok(id) => return Ok(id),
+        Err(rusqlite::Error::QueryReturnedNoRows) => {
+            match savepoint.execute("INSERT INTO album(name) VALUES($name)", [album]) {
+                Ok(_) => return Ok(savepoint.last_insert_rowid() as usize),
+                Err(err) => return Err(SaveArtistError::SQLite(err)),
+            }
+        }
+        Err(err) => return Err(SaveArtistError::SQLite(err)),
+    }
+}
+
 enum CommandScanError {
     SQLite(rusqlite::Error),
     WalkDir(walkdir::Error),
     IO(io::Error),
     MetadataRead(MetadataReadError),
     SaveArtist(SaveArtistError),
+    SaveAlbum(SaveAlbumError),
 }
 impl From<rusqlite::Error> for CommandScanError {
     fn from(err: rusqlite::Error) -> CommandScanError {
@@ -451,6 +487,11 @@ impl From<SaveArtistError> for CommandScanError {
         CommandScanError::SaveArtist(err)
     }
 }
+impl From<SaveAlbumError> for CommandScanError {
+    fn from(err: SaveAlbumError) -> CommandScanError {
+        CommandScanError::SaveAlbum(err)
+    }
+}
 impl fmt::Display for CommandScanError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -459,6 +500,7 @@ impl fmt::Display for CommandScanError {
             CommandScanError::IO(err) => write!(f, "{}", err),
             CommandScanError::MetadataRead(err) => write!(f, "{}", err),
             CommandScanError::SaveArtist(err) => write!(f, "{}", err),
+            CommandScanError::SaveAlbum(err) => write!(f, "{}", err),
         }
     }
 }
@@ -499,13 +541,14 @@ fn cmd_scan(
         let artist_id = save_artist(&mut savepoint, &artist)?;
 
         let album = md.album.unwrap_or("Unknown".to_owned());
+        let album_id = save_album(&mut savepoint, &album)?;
 
         print!("artist=\"{}\" (id={}), ", artist, artist_id,);
-        print!("album=\"{}\" (id={}), ", album, 0);
+        print!("album=\"{}\" (id={}), ", album, album_id);
         print!(
             "album artist=\"{}\" (id={})",
             md.album_artist.unwrap_or_default(),
-            0
+            0,
         );
         print!(
             "release date=\"{}\", track=\"{}\", track number={}\n",
