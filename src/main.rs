@@ -709,7 +709,7 @@ fn do_main(matches: &clap::ArgMatches) -> Result<(), AppError> {
         Some(("scan", sub_matches)) => {
             cmd_scan(&mut database, sub_matches)?;
         }
-        _ => unreachable!("should never happen"),
+        _ => (),
     }
 
     Ok(())
