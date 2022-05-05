@@ -1,9 +1,11 @@
 extern crate clap;
 extern crate directories;
-extern crate metaflac;
-extern crate mp4parse;
 extern crate rusqlite;
 extern crate walkdir;
+
+extern crate id3;
+extern crate metaflac;
+extern crate mp4parse;
 
 use clap::{Arg, Command};
 use std::fmt;
@@ -349,6 +351,25 @@ impl Metadata {
         };
         if flac_metadata.is_some() {
             return Ok(flac_metadata);
+        }
+
+        // Parse as MP3 next
+
+        file.seek(io::SeekFrom::Start(0))?;
+
+        let mp3_metadata: Option<Metadata> = match id3::Tag::read_from(&mut file) {
+            Ok(tag) => Some(Metadata {
+                artist: tag.artist().to_owned().map(|value| value.to_owned()),
+                album: tag.album().to_owned().map(|value| value.to_owned()),
+                album_artist: tag.album_artist().map(|value| value.to_owned()),
+                release_date: tag.year().map(|value| value.to_string()),
+                track_name: tag.title().map(|value| value.to_owned()),
+                track_number: tag.track().unwrap_or(0) as usize,
+            }),
+            Err(_) => None,
+        };
+        if mp3_metadata.is_some() {
+            return Ok(mp3_metadata);
         }
 
         // Parse as MP4 next
