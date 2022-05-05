@@ -301,7 +301,6 @@ impl fmt::Display for MetadataReadError {
     }
 }
 
-#[derive(Debug)]
 struct Metadata {
     artist: Option<String>,
     album: Option<String>,
@@ -507,10 +506,10 @@ fn save_track(
           number = excluded.number";
 
     let params = rusqlite::params![
-        metadata.track_name.as_ref().map(|s| s.to_owned()),
+        metadata.track_name,
         artist_id,
         album_id,
-        metadata.release_date.as_ref().map(|s| s.to_owned()),
+        metadata.release_date,
         metadata.track_number,
     ];
 
