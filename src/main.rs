@@ -333,11 +333,12 @@ impl Metadata {
     }
 
     fn read_from_path(path: &Path) -> Result<Option<Metadata>, MetadataReadError> {
-        let mut file = fs::File::open(path)?;
+        let file = fs::File::open(path)?;
+        let mut reader = io::BufReader::new(file);
 
         // Parse as FLAC first
 
-        let flac_metadata: Option<Metadata> = match metaflac::Tag::read_from(&mut file) {
+        let flac_metadata: Option<Metadata> = match metaflac::Tag::read_from(&mut reader) {
             Ok(tag) => Some(Metadata {
                 artist: Metadata::get_vorbis_comment(&tag, "ARTIST"),
                 album: Metadata::get_vorbis_comment(&tag, "ALBUM"),
@@ -355,9 +356,9 @@ impl Metadata {
 
         // Parse as MP3 next
 
-        file.seek(io::SeekFrom::Start(0))?;
+        reader.seek(io::SeekFrom::Start(0))?;
 
-        let mp3_metadata: Option<Metadata> = match id3::Tag::read_from(&mut file) {
+        let mp3_metadata: Option<Metadata> = match id3::Tag::read_from(&mut reader) {
             Ok(tag) => Some(Metadata {
                 artist: tag.artist().to_owned().map(|value| value.to_owned()),
                 album: tag.album().to_owned().map(|value| value.to_owned()),
@@ -374,9 +375,9 @@ impl Metadata {
 
         // Parse as MP4 next
 
-        file.seek(io::SeekFrom::Start(0))?;
+        reader.seek(io::SeekFrom::Start(0))?;
 
-        let mp4_metadata: Option<Metadata> = match mp4parse::read_mp4(&mut file) {
+        let mp4_metadata: Option<Metadata> = match mp4parse::read_mp4(&mut reader) {
             Ok(root) => match root.userdata {
                 Some(result) => match result {
                     Ok(user_data) => match user_data.meta {
