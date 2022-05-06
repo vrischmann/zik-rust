@@ -469,7 +469,9 @@ impl fmt::Display for SaveAlbumError {
 
 fn save_album(
     savepoint: &mut rusqlite::Savepoint,
+    artist_id: ArtistID,
     album: &String,
+    year: &Option<String>,
 ) -> Result<AlbumID, SaveArtistError> {
     let id_result =
         savepoint.query_row("SELECT id FROM album WHERE name = $name", [album], |row| {
@@ -479,7 +481,10 @@ fn save_album(
     match id_result {
         Ok(id) => return Ok(id),
         Err(rusqlite::Error::QueryReturnedNoRows) => {
-            match savepoint.execute("INSERT INTO album(name) VALUES($name)", [album]) {
+            match savepoint.execute(
+                "INSERT INTO album(artist_id, name, year) VALUES($artist_id, $name, $year)",
+                rusqlite::params![artist_id, album, year],
+            ) {
                 Ok(_) => return Ok(savepoint.last_insert_rowid() as usize),
                 Err(err) => return Err(SaveArtistError::SQLite(err)),
             }
@@ -639,7 +644,7 @@ fn cmd_scan(
         let artist_id = save_artist(&mut savepoint, &artist)?;
 
         let album = md.album.clone().unwrap_or("Unknown".to_owned());
-        let album_id = save_album(&mut savepoint, &album)?;
+        let album_id = save_album(&mut savepoint, artist_id, &album, &md.year)?;
 
         save_track(&mut savepoint, artist_id, album_id, &md)?;
 
