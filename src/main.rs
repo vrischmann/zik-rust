@@ -81,7 +81,7 @@ fn init_database(db: &mut rusqlite::Connection) -> Result<(), InitDatabaseError>
           name TEXT,
           artist_id INTEGER,
           album_artist_id INTEGER,
-          release_date TEXT,
+          year TEXT,
 
           FOREIGN KEY(artist_id) REFERENCES artist(id)
         ) STRICT",
@@ -91,7 +91,7 @@ fn init_database(db: &mut rusqlite::Connection) -> Result<(), InitDatabaseError>
           name TEXT UNIQUE,
           artist_id INTEGER,
           album_id INTEGER,
-          release_date TEXT,
+          year TEXT,
           number INTEGER,
 
           FOREIGN KEY(artist_id) REFERENCES artist(id),
@@ -307,7 +307,7 @@ struct Metadata {
     artist: Option<String>,
     album: Option<String>,
     album_artist: Option<String>,
-    release_date: Option<String>,
+    year: Option<String>,
     track_name: Option<String>,
     track_number: usize,
 }
@@ -343,7 +343,7 @@ impl Metadata {
                 artist: Metadata::get_vorbis_comment(&tag, "ARTIST"),
                 album: Metadata::get_vorbis_comment(&tag, "ALBUM"),
                 album_artist: Metadata::get_vorbis_comment(&tag, "ALBUMARTIST"),
-                release_date: Metadata::get_vorbis_comment(&tag, "DATE"),
+                year: Metadata::get_vorbis_comment(&tag, "DATE"),
                 track_name: Metadata::get_vorbis_comment(&tag, "TITLE"),
                 track_number: Metadata::get_vorbis_comment(&tag, "TRACK_NUMBER")
                     .map_or(0, |value| value.parse().unwrap_or(0)),
@@ -363,7 +363,7 @@ impl Metadata {
                 artist: tag.artist().to_owned().map(|value| value.to_owned()),
                 album: tag.album().to_owned().map(|value| value.to_owned()),
                 album_artist: tag.album_artist().map(|value| value.to_owned()),
-                release_date: tag.year().map(|value| value.to_string()),
+                year: tag.year().map(|value| value.to_string()),
                 track_name: tag.title().map(|value| value.to_owned()),
                 track_number: tag.track().unwrap_or(0) as usize,
             }),
@@ -385,7 +385,7 @@ impl Metadata {
                             artist: Metadata::get_mp4_string(metadata.artist),
                             album: Metadata::get_mp4_string(metadata.album),
                             album_artist: Metadata::get_mp4_string(metadata.album_artist),
-                            release_date: Metadata::get_mp4_string(metadata.year),
+                            year: Metadata::get_mp4_string(metadata.year),
                             track_name: Metadata::get_mp4_string(metadata.title),
                             track_number: metadata.track_number.map_or(0, |n| n as usize),
                         }),
@@ -511,12 +511,12 @@ fn save_track(
     metadata: &Metadata,
 ) -> Result<(), SaveTrackError> {
     let query = "
-        INSERT INTO track(name, artist_id, album_id, release_date, number)
+        INSERT INTO track(name, artist_id, album_id, year, number)
         VALUES(
           $name,
           $artist_id,
           $album_id,
-          $release_date,
+          $year,
           $number
         )
         ON CONFLICT(name)
@@ -524,14 +524,14 @@ fn save_track(
           name = excluded.name,
           artist_id = excluded.artist_id,
           album_id = excluded.album_id,
-          release_date = excluded.release_date,
+          year = excluded.year,
           number = excluded.number";
 
     let params = rusqlite::params![
         metadata.track_name,
         artist_id,
         album_id,
-        metadata.release_date,
+        metadata.year,
         metadata.track_number,
     ];
 
@@ -643,13 +643,13 @@ fn cmd_scan(
 
         save_track(&mut savepoint, artist_id, album_id, &md)?;
 
-        println!("artist=\"{}\" (id={}), album=\"{}\" (id={}), album artist=\"{}\", release date={}, track=\"{}\", track number={}",
+        println!("artist=\"{}\" (id={}), album=\"{}\" (id={}), album artist=\"{}\", year={}, track=\"{}\", track number={}",
             artist,
             artist_id,
             album,
             album_id,
             md.album_artist.unwrap_or_default(),
-            md.release_date.unwrap_or_default(),
+            md.year.unwrap_or_default(),
             md.track_name.unwrap_or_default(),
             md.track_number,
         );
