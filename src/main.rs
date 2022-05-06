@@ -83,7 +83,7 @@ fn init_database(db: &mut rusqlite::Connection) -> Result<(), InitDatabaseError>
           album_artist_id INTEGER,
           year TEXT,
 
-          FOREIGN KEY(artist_id) REFERENCES artist(id)
+          FOREIGN KEY(artist_id) REFERENCES artist(id) ON DELETE CASCADE
         ) STRICT",
         "CREATE INDEX IF NOT EXISTS album_name ON album(name)",
         "CREATE TABLE IF NOT EXISTS track(
@@ -94,8 +94,8 @@ fn init_database(db: &mut rusqlite::Connection) -> Result<(), InitDatabaseError>
           year TEXT,
           number INTEGER,
 
-          FOREIGN KEY(artist_id) REFERENCES artist(id),
-          FOREIGN KEY(album_id) REFERENCES album(id)
+          FOREIGN KEY(artist_id) REFERENCES artist(id) ON DELETE CASCADE,
+          FOREIGN KEY(album_id) REFERENCES album(id) ON DELETE CASCADE
         ) STRICT",
     ];
 
