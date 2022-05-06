@@ -625,6 +625,8 @@ fn cmd_scan(
 
     let mut savepoint = db.savepoint()?;
 
+    savepoint.execute("DELETE FROM artist", [])?;
+
     let walker = walkdir::WalkDir::new(library);
     for result in walker.follow_links(true) {
         let entry = result?;
