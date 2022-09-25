@@ -144,7 +144,7 @@ impl Config {
     const VALID_KEYS: [&'static str; 2] = ["library", "scan_parallelism"];
 
     fn is_valid_key(key: &str) -> bool {
-        return Config::VALID_KEYS.contains(&key);
+        Config::VALID_KEYS.contains(&key)
     }
 }
 
@@ -217,7 +217,7 @@ fn get_library_path(value: &str) -> Result<PathBuf, GetLibraryPathError> {
 
     let canonicalized_path = fs::canonicalize(path)?;
 
-    Ok(canonicalized_path.to_path_buf())
+    Ok(canonicalized_path)
 }
 
 fn cmd_config(
@@ -312,12 +312,9 @@ struct Metadata {
     track_number: usize,
 }
 impl Metadata {
-    fn get_vorbis_comment<'a>(tag: &'a metaflac::Tag, key: &'static str) -> Option<String> {
+    fn get_vorbis_comment(tag: &metaflac::Tag, key: &'static str) -> Option<String> {
         match tag.get_vorbis(key) {
-            Some(mut iter) => match iter.next() {
-                Some(comment) => Some(comment.to_owned()),
-                None => None,
-            },
+            Some(mut iter) => iter.next().map(|comment| comment.to_owned()),
             None => None,
         }
     }
@@ -401,7 +398,7 @@ impl Metadata {
             return Ok(mp4_metadata);
         }
 
-        return Ok(None);
+        Ok(None)
     }
 }
 
@@ -411,7 +408,6 @@ impl Metadata {
 
 type ArtistID = usize;
 type AlbumID = usize;
-type TrackID = usize;
 
 enum SaveArtistError {
     SQLite(rusqlite::Error),
@@ -436,18 +432,21 @@ fn save_artist(
     let id_result = savepoint.query_row(
         "SELECT id FROM artist WHERE name = $name",
         [artist],
-        |row| Ok(row.get(0)?),
+        |row| {
+            let id = row.get(0)?;
+            Ok(id)
+        },
     );
 
     match id_result {
-        Ok(id) => return Ok(id),
+        Ok(id) => Ok(id),
         Err(rusqlite::Error::QueryReturnedNoRows) => {
             match savepoint.execute("INSERT INTO artist(name) VALUES($name)", [artist]) {
-                Ok(_) => return Ok(savepoint.last_insert_rowid() as usize),
-                Err(err) => return Err(SaveArtistError::SQLite(err)),
+                Ok(_) => Ok(savepoint.last_insert_rowid() as usize),
+                Err(err) => Err(SaveArtistError::SQLite(err)),
             }
         }
-        Err(err) => return Err(SaveArtistError::SQLite(err)),
+        Err(err) => Err(SaveArtistError::SQLite(err)),
     }
 }
 
@@ -475,21 +474,22 @@ fn save_album(
 ) -> Result<AlbumID, SaveArtistError> {
     let id_result =
         savepoint.query_row("SELECT id FROM album WHERE name = $name", [album], |row| {
-            Ok(row.get(0)?)
+            let id = row.get(0)?;
+            Ok(id)
         });
 
     match id_result {
-        Ok(id) => return Ok(id),
+        Ok(id) => Ok(id),
         Err(rusqlite::Error::QueryReturnedNoRows) => {
             match savepoint.execute(
                 "INSERT INTO album(artist_id, name, year) VALUES($artist_id, $name, $year)",
                 rusqlite::params![artist_id, album, year],
             ) {
-                Ok(_) => return Ok(savepoint.last_insert_rowid() as usize),
-                Err(err) => return Err(SaveArtistError::SQLite(err)),
+                Ok(_) => Ok(savepoint.last_insert_rowid() as usize),
+                Err(err) => Err(SaveArtistError::SQLite(err)),
             }
         }
-        Err(err) => return Err(SaveArtistError::SQLite(err)),
+        Err(err) => Err(SaveArtistError::SQLite(err)),
     }
 }
 
@@ -541,8 +541,8 @@ fn save_track(
     ];
 
     match savepoint.execute(query, params) {
-        Ok(_) => return Ok(()),
-        Err(err) => return Err(SaveTrackError::SQLite(err)),
+        Ok(_) => Ok(()),
+        Err(err) => Err(SaveTrackError::SQLite(err)),
     }
 }
 
@@ -634,18 +634,18 @@ fn cmd_scan(
         let file_path = entry.path();
         println!("file {}", file_path.display());
 
-        let metadata = Metadata::read_from_path(&file_path)?;
-        if let None = metadata {
+        let metadata = Metadata::read_from_path(file_path)?;
+        if metadata.is_none() {
             println!("not a supported audio file");
             continue;
         }
 
         let md = metadata.unwrap();
 
-        let artist = md.artist.clone().unwrap_or("Unknown".to_owned());
+        let artist = md.artist.clone().unwrap_or_else(|| "Unknown".to_owned());
         let artist_id = save_artist(&mut savepoint, &artist)?;
 
-        let album = md.album.clone().unwrap_or("Unknown".to_owned());
+        let album = md.album.clone().unwrap_or_else(|| "Unknown".to_owned());
         let album_id = save_album(&mut savepoint, artist_id, &album, &md.year)?;
 
         save_track(&mut savepoint, artist_id, album_id, &md)?;
